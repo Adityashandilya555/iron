@@ -422,7 +422,20 @@ pub async fn load_mcp_servers_from(path: impl AsRef<Path>) -> Result<McpServersF
     }
 
     let content = fs::read_to_string(path).await?;
-    let config: McpServersFile = serde_json::from_str(&content)?;
+    let config: McpServersFile = match serde_json::from_str(&content) {
+        Ok(config) => config,
+        Err(e) => {
+            tracing::warn!(
+                "Corrupted mcp-servers.json file at {:?}: {}. Backing up and returning empty config.",
+                path,
+                e
+            );
+            let backup_path = path.with_extension("json.bak");
+            let _ = fs::copy(path, &backup_path).await;
+            let _ = fs::remove_file(path).await;
+            return Ok(McpServersFile::default());
+        }
+    };
 
     // Validate every server on load so corrupted configs are caught early
     for server in &config.servers {
@@ -756,6 +769,29 @@ mod tests {
             err.contains("bad-server"),
             "Error should name the offending server, got: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_load_corrupted_json_graceful_degradation() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("mcp-servers.json");
+        let backup_path = dir.path().join("mcp-servers.json.bak");
+
+        // Write malformed JSON (trailing characters after complete object)
+        let corrupted = r#"{"servers": [{"name": "test", "url": "https://test.com", "enabled": true}]} extra garbage"#;
+        tokio::fs::write(&path, corrupted).await.unwrap();
+
+        // Load should succeed with empty config
+        let config = load_mcp_servers_from(&path).await.unwrap();
+        assert!(config.servers.is_empty(), "Should return empty config for corrupted JSON");
+
+        // Backup should exist
+        assert!(backup_path.exists(), "Backup file should be created");
+        let backup_content = tokio::fs::read_to_string(&backup_path).await.unwrap();
+        assert_eq!(backup_content, corrupted, "Backup should contain the corrupted content");
+
+        // Original file should be removed
+        assert!(!path.exists(), "Corrupted file should be removed");
     }
 
     #[test]

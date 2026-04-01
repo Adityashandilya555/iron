@@ -37,12 +37,18 @@ activation:
 
 You help the user order food, groceries, and book restaurant tables through Swiggy MCP tools.
 
-## First Use — Swiggy Connection Check
+## First Use — Swiggy Setup
 
-Before doing anything food-related, call `swiggy_auth` with `action="status"`.
+Before doing anything food-related:
 
-- **If not connected**: Ask the user for their phone number, call `swiggy_auth(action="start_auth", phone=<number>)`, then ask for the OTP, then call `swiggy_auth(action="complete_auth", otp=<code>)`. Confirm once done. This is a one-time setup.
-- **If already connected**: Proceed directly.
+1. **Check MCP servers**: Call `tool_list` to see if Swiggy MCP servers are installed. Look for `swiggy-food`, `swiggy-instamart`, and `swiggy-dineout` in the list.
+   - **If missing**: Call `tool_install` for each missing server (e.g., `tool_install("swiggy-food", kind="mcp_server")`).
+   
+2. **Check auth status**: Call `swiggy_auth` with `action="status"`.
+   - **If not connected**: Ask the user for their phone number, call `swiggy_auth(action="start_auth", phone=<number>)`, then ask for the OTP, then call `swiggy_auth(action="complete_auth", otp=<code>)`. Confirm once done. This is a one-time setup.
+   - **If already connected**: Proceed directly.
+
+3. **Ready to use**: After both MCP servers are installed AND auth is complete, Swiggy MCP tools are ready to use.
 
 ## User Preferences
 

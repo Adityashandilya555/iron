@@ -456,10 +456,7 @@ impl ToolRegistry {
     ///
     /// Enables phone+OTP authentication against Swiggy MCP servers without
     /// a browser. One auth call covers food, Instamart, and Dineout tools.
-    pub fn register_swiggy_auth_tool(
-        &self,
-        secrets: Arc<dyn SecretsStore + Send + Sync>,
-    ) {
+    pub fn register_swiggy_auth_tool(&self, secrets: Arc<dyn SecretsStore + Send + Sync>) {
         self.register_sync(Arc::new(SwiggyAuthTool::new(secrets)));
         tracing::debug!("Registered Swiggy auth tool");
     }

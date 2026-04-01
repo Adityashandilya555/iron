@@ -5,5 +5,5 @@
   "description": "Order food from restaurants via Swiggy — search, browse menus, manage cart, and place orders",
   "keywords": ["food", "order", "restaurant", "swiggy", "delivery", "menu", "biryani", "pizza", "lunch", "dinner", "hungry", "eat"],
   "url": "https://mcp.swiggy.com/food",
-  "auth": "dcr"
+  "auth": "none"
 }

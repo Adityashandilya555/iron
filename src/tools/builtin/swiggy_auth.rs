@@ -59,6 +59,7 @@ const SWIGGY_SERVERS: &[&str] = &["swiggy-food", "swiggy-instamart", "swiggy-din
 
 /// Temporary state held between OTP send and verify.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct PendingAuth {
     swiggy_user_id: String,
     session_info: String,
@@ -299,7 +300,9 @@ impl SwiggyAuthTool {
         }
 
         let data = otp_resp.data.ok_or_else(|| {
-            ToolError::ExecutionFailed("Missing session data in Swiggy send-OTP response.".to_string())
+            ToolError::ExecutionFailed(
+                "Missing session data in Swiggy send-OTP response.".to_string(),
+            )
         })?;
 
         let pending = PendingAuth {
@@ -312,7 +315,10 @@ impl SwiggyAuthTool {
             created_at_unix: Utc::now().timestamp(),
         };
 
-        self.pending.lock().await.insert(user_id.to_string(), pending);
+        self.pending
+            .lock()
+            .await
+            .insert(user_id.to_string(), pending);
 
         Ok(ToolOutput::text(
             format!(
@@ -334,20 +340,17 @@ impl SwiggyAuthTool {
         let otp: String = otp_raw.chars().filter(|c| c.is_ascii_digit()).collect();
 
         if otp.len() < 4 || otp.len() > 8 {
-            return Err(ToolError::InvalidParameters("OTP must be 4–8 digits.".to_string()));
+            return Err(ToolError::InvalidParameters(
+                "OTP must be 4–8 digits.".to_string(),
+            ));
         }
 
         // Load and remove pending auth state.
-        let pending = self
-            .pending
-            .lock()
-            .await
-            .remove(user_id)
-            .ok_or_else(|| {
-                ToolError::ExecutionFailed(
-                    "No pending Swiggy auth found. Please call start_auth first.".to_string(),
-                )
-            })?;
+        let pending = self.pending.lock().await.remove(user_id).ok_or_else(|| {
+            ToolError::ExecutionFailed(
+                "No pending Swiggy auth found. Please call start_auth first.".to_string(),
+            )
+        })?;
 
         let age = Utc::now().timestamp() - pending.created_at_unix;
         if age > OTP_SESSION_TIMEOUT_SECS {
@@ -416,10 +419,7 @@ impl SwiggyAuthTool {
             .send()
             .await
             .map_err(|e| {
-                ToolError::ExecutionFailed(format!(
-                    "Could not reach Swiggy token endpoint: {}",
-                    e
-                ))
+                ToolError::ExecutionFailed(format!("Could not reach Swiggy token endpoint: {}", e))
             })?;
 
         if !token_resp.status().is_success() {
@@ -436,16 +436,12 @@ impl SwiggyAuthTool {
         })?;
 
         // Prefer standard OAuth `access_token`; fall back to Swiggy's `opaque_code`.
-        let access_token = token
-            .access_token
-            .or(token.opaque_code)
-            .ok_or_else(|| {
-                ToolError::ExecutionFailed(
-                    "No access token received from Swiggy. \
-                     The token format may have changed."
-                        .to_string(),
-                )
-            })?;
+        let access_token = token.access_token.or(token.opaque_code).ok_or_else(|| {
+            ToolError::ExecutionFailed(
+                "No access token received from Swiggy. The token format may have changed."
+                    .to_string(),
+            )
+        })?;
 
         // Store the token for every Swiggy MCP server under the names that
         // McpServerConfig::token_secret_name() produces.
@@ -459,9 +455,12 @@ impl SwiggyAuthTool {
                 create_params = create_params.with_expiry(expires_at);
             }
 
-            self.secrets.create(user_id, create_params).await.map_err(|e| {
-                ToolError::ExecutionFailed(format!("Failed to store {server} token: {e}"))
-            })?;
+            self.secrets
+                .create(user_id, create_params)
+                .await
+                .map_err(|e| {
+                    ToolError::ExecutionFailed(format!("Failed to store {server} token: {e}"))
+                })?;
 
             if let Some(ref refresh) = token.refresh_token {
                 let refresh_name = format!("mcp_{server}_access_token_refresh_token");
@@ -511,11 +510,15 @@ mod tests {
     fn test_pkce_verifier_is_url_safe_base64() {
         let (verifier, challenge) = generate_pkce();
         assert!(
-            verifier.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_'),
+            verifier
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '-' || c == '_'),
             "verifier must be URL-safe base64"
         );
         assert!(
-            challenge.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_'),
+            challenge
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '-' || c == '_'),
             "challenge must be URL-safe base64"
         );
     }
