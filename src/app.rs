@@ -381,6 +381,11 @@ impl AppBuilder {
             None
         };
 
+        // Register Swiggy auth tool — requires secrets store.
+        if let Some(ref ss) = self.secrets_store {
+            tools.register_swiggy_auth_tool(Arc::clone(ss));
+        }
+
         // Register image/vision tools if we have a workspace and LLM API credentials
         if workspace.is_some() {
             let (api_base, api_key_opt) = if let Some(ref provider) = self.config.llm.provider {

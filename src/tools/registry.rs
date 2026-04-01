@@ -20,9 +20,9 @@ use crate::tools::builtin::{
     ApplyPatchTool, CancelJobTool, CreateJobTool, EchoTool, ExtensionInfoTool, HttpTool,
     JobEventsTool, JobPromptTool, JobStatusTool, JsonTool, ListDirTool, ListJobsTool,
     MemoryReadTool, MemorySearchTool, MemoryTreeTool, MemoryWriteTool, PromptQueue, ReadFileTool,
-    ShellTool, SkillInstallTool, SkillListTool, SkillRemoveTool, SkillSearchTool, TimeTool,
-    ToolActivateTool, ToolAuthTool, ToolInstallTool, ToolListTool, ToolRemoveTool, ToolSearchTool,
-    ToolUpgradeTool, WriteFileTool,
+    ShellTool, SkillInstallTool, SkillListTool, SkillRemoveTool, SkillSearchTool, SwiggyAuthTool,
+    TimeTool, ToolActivateTool, ToolAuthTool, ToolInstallTool, ToolListTool, ToolRemoveTool,
+    ToolSearchTool, ToolUpgradeTool, WriteFileTool,
 };
 use crate::tools::rate_limiter::RateLimiter;
 use crate::tools::tool::{ApprovalRequirement, Tool, ToolDomain};
@@ -450,6 +450,18 @@ impl ToolRegistry {
         self.register_sync(Arc::new(SecretListTool::new(Arc::clone(&store))));
         self.register_sync(Arc::new(SecretDeleteTool::new(store)));
         tracing::debug!("Registered 2 secret management tools (list, delete)");
+    }
+
+    /// Register Swiggy authentication tool.
+    ///
+    /// Enables phone+OTP authentication against Swiggy MCP servers without
+    /// a browser. One auth call covers food, Instamart, and Dineout tools.
+    pub fn register_swiggy_auth_tool(
+        &self,
+        secrets: Arc<dyn SecretsStore + Send + Sync>,
+    ) {
+        self.register_sync(Arc::new(SwiggyAuthTool::new(secrets)));
+        tracing::debug!("Registered Swiggy auth tool");
     }
 
     /// Register extension management tools (search, install, auth, activate, list, remove).
