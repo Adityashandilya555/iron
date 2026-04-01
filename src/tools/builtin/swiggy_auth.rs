@@ -238,8 +238,30 @@ impl SwiggyAuthTool {
         user_id: &str,
         start: Instant,
     ) -> Result<ToolOutput, ToolError> {
-        let phone_raw = require_str(params, "phone")?;
-        let country_code = params["country_code"].as_str().unwrap_or("+91");
+        // LLMs frequently send numeric-looking values as JSON numbers despite
+        // the schema declaring "type": "string". Coerce both types.
+        let phone_raw = params
+            .get("phone")
+            .map(|v| match v {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Number(n) => n.to_string(),
+                _ => String::new(),
+            })
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                ToolError::InvalidParameters("missing 'phone' parameter".to_string())
+            })?;
+
+        let country_code_raw = params
+            .get("country_code")
+            .map(|v| match v {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Number(n) => format!("+{}", n),
+                _ => String::new(),
+            })
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "+91".to_string());
+        let country_code = country_code_raw.as_str();
 
         let phone_digits: String = phone_raw.chars().filter(|c| c.is_ascii_digit()).collect();
 
@@ -336,7 +358,17 @@ impl SwiggyAuthTool {
         user_id: &str,
         start: Instant,
     ) -> Result<ToolOutput, ToolError> {
-        let otp_raw = require_str(params, "otp")?;
+        let otp_raw = params
+            .get("otp")
+            .map(|v| match v {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Number(n) => n.to_string(),
+                _ => String::new(),
+            })
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                ToolError::InvalidParameters("missing 'otp' parameter".to_string())
+            })?;
         let otp: String = otp_raw.chars().filter(|c| c.is_ascii_digit()).collect();
 
         if otp.len() < 4 || otp.len() > 8 {
