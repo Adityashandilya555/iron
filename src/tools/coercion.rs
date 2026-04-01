@@ -161,6 +161,20 @@ fn coerce_value(value: &serde_json::Value, schema: &serde_json::Value) -> serde_
         return serde_json::Value::Object(coerced);
     }
 
+    // LLMs often send numbers or booleans for string-typed fields (e.g. phone
+    // numbers, OTP codes, zip codes). Coerce to string when the schema expects it.
+    if schema_allows_type(schema, "string")
+        && !schema_allows_type(schema, "number")
+        && !schema_allows_type(schema, "integer")
+    {
+        if let Some(n) = value.as_number() {
+            return serde_json::Value::String(n.to_string());
+        }
+        if let Some(b) = value.as_bool() {
+            return serde_json::Value::String(b.to_string());
+        }
+    }
+
     value.clone()
 }
 
@@ -1026,6 +1040,57 @@ mod tests {
         let result = prepare_params_for_schema(&params, &schema);
 
         assert_eq!(result["root"]["value"], serde_json::json!(42));
+    }
+
+    #[test]
+    fn coerces_number_to_string_when_schema_expects_string() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "phone": { "type": "string" },
+                "code": { "type": "string" }
+            }
+        });
+        let params = serde_json::json!({
+            "phone": 9289289123_u64,
+            "code": 1234
+        });
+
+        let result = prepare_params_for_schema(&params, &schema);
+
+        assert_eq!(result["phone"], serde_json::json!("9289289123"));
+        assert_eq!(result["code"], serde_json::json!("1234"));
+    }
+
+    #[test]
+    fn coerces_bool_to_string_when_schema_expects_string() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "flag": { "type": "string" }
+            }
+        });
+        let params = serde_json::json!({ "flag": true });
+
+        let result = prepare_params_for_schema(&params, &schema);
+
+        assert_eq!(result["flag"], serde_json::json!("true"));
+    }
+
+    #[test]
+    fn does_not_coerce_number_when_schema_allows_number() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "count": { "type": ["string", "number"] }
+            }
+        });
+        let params = serde_json::json!({ "count": 42 });
+
+        let result = prepare_params_for_schema(&params, &schema);
+
+        // Number stays as number when schema allows both string and number
+        assert_eq!(result["count"], serde_json::json!(42));
     }
 
     #[test]
