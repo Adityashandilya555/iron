@@ -435,6 +435,34 @@ pub fn require_str<'a>(params: &'a serde_json::Value, name: &str) -> Result<&'a 
         .ok_or_else(|| ToolError::InvalidParameters(format!("missing '{}' parameter", name)))
 }
 
+/// Like [`require_str`] but returns an owned `String` and coerces JSON numbers
+/// and booleans to strings.
+///
+/// Use for parameters where LLMs frequently send numeric-looking values as JSON
+/// numbers (phone numbers, OTP codes, zip codes). The global coercion layer in
+/// `coercion.rs` normally converts these before the tool runs, but this provides
+/// a safety net at the tool level.
+pub fn require_str_coerced(params: &serde_json::Value, name: &str) -> Result<String, ToolError> {
+    let v = params
+        .get(name)
+        .ok_or_else(|| ToolError::InvalidParameters(format!("missing '{}' parameter", name)))?;
+    match v {
+        serde_json::Value::String(s) => Ok(s.clone()),
+        serde_json::Value::Number(n) => Ok(n.to_string()),
+        serde_json::Value::Bool(b) => Ok(b.to_string()),
+        _ => Err(ToolError::InvalidParameters(format!(
+            "'{}' must be a string, got {}",
+            name,
+            match v {
+                serde_json::Value::Null => "null",
+                serde_json::Value::Array(_) => "array",
+                serde_json::Value::Object(_) => "object",
+                _ => "unknown",
+            }
+        ))),
+    }
+}
+
 /// Extract a required parameter of any type from a JSON object.
 ///
 /// Returns `ToolError::InvalidParameters` if the key is missing.

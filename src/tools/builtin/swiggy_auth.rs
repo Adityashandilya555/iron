@@ -42,7 +42,7 @@ use tokio::sync::Mutex;
 
 use crate::context::JobContext;
 use crate::secrets::{CreateSecretParams, SecretsStore};
-use crate::tools::tool::{Tool, ToolError, ToolOutput, require_str};
+use crate::tools::tool::{Tool, ToolError, ToolOutput, require_str, require_str_coerced};
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -208,6 +208,11 @@ impl Tool for SwiggyAuthTool {
         ctx: &JobContext,
     ) -> Result<ToolOutput, ToolError> {
         let start = Instant::now();
+        tracing::debug!(
+            raw_phone = ?params.get("phone"),
+            raw_cc = ?params.get("country_code"),
+            "swiggy_auth: execute() params"
+        );
         let action = require_str(&params, "action")?;
         let user_id = ctx.user_id.clone();
 
@@ -226,6 +231,10 @@ impl Tool for SwiggyAuthTool {
         // Token data arrives from Swiggy's servers.
         true
     }
+
+    fn sensitive_params(&self) -> &[&str] {
+        &["phone", "otp"]
+    }
 }
 
 // ── Action implementations ─────────────────────────────────────────────────────
@@ -238,29 +247,19 @@ impl SwiggyAuthTool {
         user_id: &str,
         start: Instant,
     ) -> Result<ToolOutput, ToolError> {
-        // LLMs frequently send numeric-looking values as JSON numbers despite
-        // the schema declaring "type": "string". Coerce both types.
-        let phone_raw = params
-            .get("phone")
-            .map(|v| match v {
-                serde_json::Value::String(s) => s.clone(),
-                serde_json::Value::Number(n) => n.to_string(),
-                _ => String::new(),
-            })
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| {
-                ToolError::InvalidParameters("missing 'phone' parameter".to_string())
-            })?;
+        let phone_raw = require_str_coerced(params, "phone")?;
 
-        let country_code_raw = params
-            .get("country_code")
-            .map(|v| match v {
-                serde_json::Value::String(s) => s.clone(),
-                serde_json::Value::Number(n) => format!("+{}", n),
-                _ => String::new(),
-            })
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "+91".to_string());
+        let country_code_raw = match params.get("country_code") {
+            Some(serde_json::Value::String(s)) if !s.is_empty() => {
+                if s.starts_with('+') {
+                    s.clone()
+                } else {
+                    format!("+{}", s)
+                }
+            }
+            Some(serde_json::Value::Number(n)) => format!("+{}", n),
+            _ => "+91".to_string(),
+        };
         let country_code = country_code_raw.as_str();
 
         let phone_digits: String = phone_raw.chars().filter(|c| c.is_ascii_digit()).collect();
@@ -358,17 +357,7 @@ impl SwiggyAuthTool {
         user_id: &str,
         start: Instant,
     ) -> Result<ToolOutput, ToolError> {
-        let otp_raw = params
-            .get("otp")
-            .map(|v| match v {
-                serde_json::Value::String(s) => s.clone(),
-                serde_json::Value::Number(n) => n.to_string(),
-                _ => String::new(),
-            })
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| {
-                ToolError::InvalidParameters("missing 'otp' parameter".to_string())
-            })?;
+        let otp_raw = require_str_coerced(params, "otp")?;
         let otp: String = otp_raw.chars().filter(|c| c.is_ascii_digit()).collect();
 
         if otp.len() < 4 || otp.len() > 8 {
@@ -537,6 +526,54 @@ impl SwiggyAuthTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::JobContext;
+    use crate::secrets::InMemorySecretsStore;
+    use crate::testing::credentials::TEST_CRYPTO_KEY;
+    use secrecy::SecretString;
+
+    fn test_secrets() -> Arc<dyn crate::secrets::SecretsStore + Send + Sync> {
+        let crypto = Arc::new(
+            crate::secrets::SecretsCrypto::new(SecretString::from(TEST_CRYPTO_KEY.to_string()))
+                .expect("test crypto key"),
+        );
+        Arc::new(InMemorySecretsStore::new(crypto))
+    }
+
+    #[tokio::test]
+    async fn start_auth_accepts_numeric_phone() {
+        let tool = SwiggyAuthTool::new(test_secrets());
+        let ctx = JobContext::with_user("test-user", "test", "test");
+
+        // LLM sends phone as JSON number — must NOT fail with InvalidParameters
+        let params = serde_json::json!({
+            "action": "start_auth",
+            "phone": 9289289123_u64,
+            "country_code": 91
+        });
+
+        let result = tool.execute(params, &ctx).await;
+        if let Err(ToolError::InvalidParameters(msg)) = &result {
+            panic!("parameter parsing must not fail for numeric phone, got: {msg}");
+        }
+        // Any other error (ExecutionFailed from HTTP, etc.) is expected in tests
+    }
+
+    #[tokio::test]
+    async fn start_auth_accepts_string_phone() {
+        let tool = SwiggyAuthTool::new(test_secrets());
+        let ctx = JobContext::with_user("test-user", "test", "test");
+
+        let params = serde_json::json!({
+            "action": "start_auth",
+            "phone": "9289289123",
+            "country_code": "+91"
+        });
+
+        let result = tool.execute(params, &ctx).await;
+        if let Err(ToolError::InvalidParameters(msg)) = &result {
+            panic!("parameter parsing must not fail for string phone, got: {msg}");
+        }
+    }
 
     #[test]
     fn test_pkce_verifier_is_url_safe_base64() {
