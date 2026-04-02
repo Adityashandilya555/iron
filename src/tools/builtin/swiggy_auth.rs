@@ -326,6 +326,14 @@ impl SwiggyAuthTool {
             )
         })?;
 
+        tracing::debug!(
+            swiggy_user_id = %data.user_id,
+            session_info = %data.session_info,
+            phone = %phone_digits,
+            country_code = %country_code,
+            "swiggy_auth: OTP request accepted by Swiggy"
+        );
+
         let pending = PendingAuth {
             swiggy_user_id: data.user_id,
             session_info: data.session_info,
