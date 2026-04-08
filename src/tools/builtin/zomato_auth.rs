@@ -317,6 +317,8 @@ impl ZomatoAuthTool {
 
         let login_challenge = url::Url::parse(&if location.starts_with('/') {
             format!("{ZOMATO_AUTH_BASE}{location}")
+        } else if location.starts_with("./") {
+            format!("{ZOMATO_AUTH_BASE}/{}", location.strip_prefix("./").unwrap_or(location))
         } else {
             location.to_string()
         })
