@@ -32,7 +32,7 @@ use ironclaw::llm::recording::{HttpExchange, HttpInterceptor, ReplayingHttpInter
 /// Substring unique to the static bootstrap greeting (GREETING.md).
 /// Used to transparently filter per-user bootstrap greetings from the
 /// response stream so tests don't need to account for them manually.
-const BOOTSTRAP_GREETING_MARKER: &str = "always-on chief of staff";
+const BOOTSTRAP_GREETING_MARKER: &str = "food & hangout buddy for Bangalore";
 
 /// A running test agent with methods to inject messages and inspect results.
 pub struct TestRig {
