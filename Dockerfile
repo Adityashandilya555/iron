@@ -64,7 +64,7 @@ RUN cargo build --release --bin ironclaw
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libssl3 \
+    ca-certificates libssl3 curl \
     && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
