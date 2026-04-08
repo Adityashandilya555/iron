@@ -783,12 +783,18 @@ mod tests {
 
         // Load should succeed with empty config
         let config = load_mcp_servers_from(&path).await.unwrap();
-        assert!(config.servers.is_empty(), "Should return empty config for corrupted JSON");
+        assert!(
+            config.servers.is_empty(),
+            "Should return empty config for corrupted JSON"
+        );
 
         // Backup should exist
         assert!(backup_path.exists(), "Backup file should be created");
         let backup_content = tokio::fs::read_to_string(&backup_path).await.unwrap();
-        assert_eq!(backup_content, corrupted, "Backup should contain the corrupted content");
+        assert_eq!(
+            backup_content, corrupted,
+            "Backup should contain the corrupted content"
+        );
 
         // Original file should be removed
         assert!(!path.exists(), "Corrupted file should be removed");

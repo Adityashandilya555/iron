@@ -1,13 +1,22 @@
 ---
 name: food-ordering
-version: "0.1.0"
-description: Help users order food from Swiggy — handles auth, restaurant search, menu browsing, cart building, coupon detection, and group ordering.
+version: "0.2.0"
+description: >
+  Orchestrates food delivery ordering across Swiggy and Zomato platforms.
+  Use this skill whenever the user wants to order food, search for restaurants,
+  browse menus, add items to cart, apply coupons, place orders, or track deliveries.
+  Triggers on: "order food", "I'm hungry", restaurant names, cuisine names (biryani,
+  pizza, dosa, etc.), "what should I eat", "order from swiggy/zomato", menu browsing,
+  cart operations, food delivery tracking. Also triggers when user mentions specific
+  dishes, asks for recommendations, or says anything food-related. This skill handles
+  the COMPLETE food ordering lifecycle from search to delivery tracking.
 activation:
   keywords:
     - food
     - hungry
     - order
     - swiggy
+    - zomato
     - restaurant
     - menu
     - biryani
@@ -16,11 +25,10 @@ activation:
     - lunch
     - dinner
     - breakfast
-    - instamart
-    - groceries
     - delivery
     - coupon
-    - dineout
+    - cart
+    - checkout
   patterns:
     - "(?i)(want|feel like|craving|looking for).{0,30}(eat|food|order|lunch|dinner)"
     - "(?i)(find|show|search).{0,30}(restaurant|place to eat|food)"
@@ -28,76 +36,130 @@ activation:
   tags:
     - food
     - delivery
-    - swiggy
     - ordering
   max_context_tokens: 2500
 ---
 
-# Food Ordering via Swiggy
+# Food Ordering — Swiggy + Zomato
 
-You help the user order food, groceries, and book restaurant tables through Swiggy MCP tools.
+Dual-platform food delivery. Query both, merge results, user picks platform per order.
 
-## First Use — Swiggy Setup
+## 1. Auth Check
 
-Before doing anything food-related:
+Call `swiggy_auth(action="status")` and `zomato_auth(action="status")`.
 
-1. **Check MCP servers**: Call `tool_list` to see if Swiggy MCP servers are installed. Look for `swiggy-food`, `swiggy-instamart`, and `swiggy-dineout` in the list.
-   - **If missing**: Call `tool_install` for each missing server (e.g., `tool_install("swiggy-food", kind="mcp_server")`).
-   
-2. **Check auth status**: Call `swiggy_auth` with `action="status"`.
-   - **If not connected**: Ask the user for their phone number, call `swiggy_auth(action="start_auth", phone=<number>)`, then ask for the OTP, then call `swiggy_auth(action="complete_auth", otp=<code>)`. Confirm once done. This is a one-time setup.
-   - **If already connected**: Proceed directly.
+- **Both valid:** Proceed.
+- **One valid:** Search that platform. Auth the other using phone from `USER.md`.
+- **Neither valid:** Read `workspace://USER.md → phone`. Call `swiggy_auth(action="start_auth", phone=<number>)`. Ask user for OTP only. After Swiggy, do Zomato same way.
+- **Never re-ask phone number.** OTP only.
 
-3. **Ready to use**: After both MCP servers are installed AND auth is complete, Swiggy MCP tools are ready to use.
+## 2. Address Resolution
 
-## User Preferences
+Call both in parallel on first food request:
+- `swiggy:get_addresses()` → use `id` as `addressId`
+- `zomato:get_saved_addresses_for_user()` → use `address_id`
 
-Read `preferences/food.md` from workspace memory before searching. If it doesn't exist, ask the user:
-- What cuisines do you usually prefer?
-- Rough budget per meal (e.g. ₹150–500)?
-- Any dietary restrictions (veg/non-veg/vegan)?
-- Delivery address or area?
-- Swiggy, Instamart, or both?
+Match to user's residence from USER.md. Cache the pair for the session.
 
-Write their answers to `preferences/food.md` using `memory_write`. Keep the conversation casual — not a form.
+## 3. Search (parallel)
 
-## Searching for Food
+- `swiggy:search_restaurants(addressId, query)`
+- `zomato:get_restaurants_for_keyword(address_id, keyword)`
 
-**Always** apply filters from stored preferences:
-- Pass location, cuisine, and budget filters in every MCP search call
-- Never fetch full restaurant lists without a cuisine or dish filter
+If one fails, use the other.
 
-**Response compression rule** — after every MCP tool call, extract ONLY:
-- Restaurant name, rating, delivery ETA, price range, top 3–5 items
-- Discard everything else before presenting to the user
+**Result processing:**
+1. Filter: Swiggy `availabilityStatus == "OPEN"` / Zomato `serviceability_status == "serviceable"`
+2. Deduplicate by restaurant name + locality
+3. Apply USER.md preferences: `diet` filter, `budget` filter, `cuisines` boost
+4. Show top 5 with platform badges (🟠 Swiggy / 🔴 Zomato / 🟠🔴 Both)
+5. Each result: name, rating, distance, ETA, cost for two, best offer
 
-Present results as a short list, not a wall of text.
+For vague queries ("I'm hungry"), use USER.md `cuisines` as the search term.
 
-## Cart & Coupon Detection
+## 4. Menu Browse
 
-After the user picks items:
-1. Add them to cart via the Swiggy MCP cart tool
-2. Check the cart total against available coupons/offers
-3. If applying a coupon or adding ₹30–100 more would unlock a discount, mention it once: "Your cart is ₹420 — adding ₹80 more gets you 20% off."
-4. Don't push upsells more than once
+Platform locked by restaurant selection.
 
-## Ordering Mode
+**Swiggy:** `get_restaurant_menu(addressId, restaurantId)` — paginated categories.
+For item details with variants/addons: `search_menu(addressId, query, restaurantIdOfAddedItem)`.
 
-Before confirming checkout, ask:
-- Order alone
-- With friends (show stored contacts from `preferences/social.md`)
-- With anyone from your hostel
+**Zomato:** `get_menu_items_listing(res_id, address_id)` → discover categories.
+Then `get_restaurant_menu_by_categories(res_id, categories, address_id)` for full variant/addon data.
 
-For group orders, invoke the group-order skill or the `group_order` tool.
+Display: filter by diet preference, highlight bestsellers, group by category, max 8 items per message.
 
-## COD Notice
+## 5. Item Selection
 
-Swiggy currently supports Cash on Delivery only via MCP. Remind the user once before placing the order.
+**Always ask variant before adding to cart.** Show sizes/combos with prices.
+Show available addons after variant is chosen.
 
-## Instamart
+Swiggy: items use either `variations` (legacy) or `variantsV2` — use matching field in cart.
+Zomato: use `variant_id` (v_*), NOT `catalogue_id` (ctl_*). Addon choices are ctl_* IDs.
 
-For grocery/essentials requests, use the `swiggy-instamart` MCP tools. Apply the same preference + compression rules.
+## 6. Cross-Platform Comparison
 
-## Dineout
+**Before cart creation**, if restaurant exists on both platforms:
 
-For table booking requests, use the `swiggy-dineout` MCP tools. Always ask for: area, date, time, party size.
+1. Fetch pricing from both (Swiggy `search_menu` + `fetch_food_coupons` / Zomato menu data)
+2. Show side-by-side: item price + delivery + best coupon + ETA per platform
+3. User picks platform or says "cheapest" → lock platform for this order
+
+Skip if restaurant is only on one platform.
+
+## 6.5. Group Order (Optional)
+
+After user picks platform but before creating cart, offer group ordering:
+"Want to order with friends? I can set up a group order."
+
+- **Solo** (default) → continue to §7 (Cart)
+- **With friends** → hand off to `group-order` skill with context: restaurant name, platform, and address IDs
+
+Skip this prompt if:
+- User already indicated solo intent ("just me", "solo", "no")
+- USER.md `friends[]` is empty and user hasn't mentioned friends
+- User is in a hurry ("quick order", "just get me...")
+
+## 7. Cart
+
+**Swiggy:** `update_food_cart(restaurantId, cartItems, addressId)` then `get_food_cart(addressId)`.
+Cart is session-local (not visible in user's app until order placed).
+
+**Zomato:** `create_cart(res_id, items, address_id, payment_type)`. Always ask payment_type — `upi_qr` or `pay_later`.
+
+Ask "Want to add anything else?" before proceeding.
+
+## 8. Coupons
+
+**Swiggy:** `fetch_food_coupons(restaurantId, addressId)` → show best applicable.
+Apply with `apply_food_coupon(couponCode, addressId)`.
+If adding ₹30-100 more unlocks a discount, mention once.
+
+**Zomato:** `get_cart_offers(cart_id, address_id)` → apply via `promo_code` in `create_cart`.
+
+## 9. Order Placement
+
+**Mandatory before placing:** Show cart summary, delivery address, payment method, ETA. Get explicit confirmation.
+
+**Swiggy:** `place_food_order(addressId, paymentMethod)`. Currently COD only — show only `availablePaymentMethods`. Cart limit ₹1000 (beta).
+
+**Zomato:** `checkout_cart(cart_id)`. If `upi_qr`, display the returned QR code.
+
+## 10. Post-Order
+
+Confirm order ID + ETA. Offer tracking:
+- Swiggy: `track_food_order(orderId)`
+- Zomato: `get_order_tracking_info()`
+
+**Cancellation:** No cancel API. Guide user to app → active order → Help → Cancel.
+
+## Error Recovery
+
+| Error | Action |
+|-------|--------|
+| Auth expired | Re-auth with USER.md phone, ask OTP only, resume flow |
+| Platform unreachable | Fall back to other platform |
+| Both platforms down | Tell user, suggest retry later |
+| Restaurant closed | Suggest open alternatives from same search |
+| Item out of stock | Show same-category alternatives |
+| Cart >₹1000 (Swiggy) | Suggest Zomato or split order |

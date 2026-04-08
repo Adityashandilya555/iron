@@ -381,9 +381,10 @@ impl AppBuilder {
             None
         };
 
-        // Register Swiggy auth tool — requires secrets store.
+        // Register Swiggy and Zomato auth tools — requires secrets store.
         if let Some(ref ss) = self.secrets_store {
             tools.register_swiggy_auth_tool(Arc::clone(ss));
+            tools.register_zomato_auth_tool(Arc::clone(ss));
         }
 
         // Register image/vision tools if we have a workspace and LLM API credentials
@@ -881,6 +882,10 @@ impl AppBuilder {
             let mut registry = SkillRegistry::new(self.config.skills.local_dir.clone())
                 .with_installed_dir(self.config.skills.installed_dir.clone())
                 .with_max_scan_depth(self.config.skills.max_scan_depth);
+            if let Some(ws_skills) = self.config.skills.workspace_skills_dir.clone() {
+                tracing::debug!("Loading workspace skills from {}", ws_skills.display());
+                registry = registry.with_workspace_dir(ws_skills);
+            }
             let loaded = registry.discover_all().await;
             if !loaded.is_empty() {
                 tracing::debug!("Loaded {} skill(s): {}", loaded.len(), loaded.join(", "));

@@ -116,6 +116,32 @@ impl Session {
             false
         }
     }
+
+    /// Get the current Aria conversation phase stored in session metadata.
+    ///
+    /// Phase numbers follow the Personifi spec:
+    /// - 0: Auto-provision
+    /// - 1: Welcome
+    /// - 2: Onboarding
+    /// - 3: Home screen
+    /// - 3.5: Chat mode
+    /// - 4: Food ordering
+    /// - 5: Grocery ordering
+    /// - 6: Table booking
+    /// - 7: Community engine
+    pub fn aria_phase(&self) -> Option<f64> {
+        self.metadata.get("aria_phase").and_then(|v| v.as_f64())
+    }
+
+    /// Set the current Aria conversation phase in session metadata.
+    pub fn set_aria_phase(&mut self, phase: f64) {
+        if self.metadata.is_null() {
+            self.metadata = serde_json::json!({});
+        }
+        if let Some(obj) = self.metadata.as_object_mut() {
+            obj.insert("aria_phase".to_string(), serde_json::json!(phase));
+        }
+    }
 }
 
 /// State of a thread.

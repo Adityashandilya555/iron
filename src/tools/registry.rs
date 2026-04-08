@@ -22,7 +22,7 @@ use crate::tools::builtin::{
     MemoryReadTool, MemorySearchTool, MemoryTreeTool, MemoryWriteTool, PromptQueue, ReadFileTool,
     ShellTool, SkillInstallTool, SkillListTool, SkillRemoveTool, SkillSearchTool, SwiggyAuthTool,
     TimeTool, ToolActivateTool, ToolAuthTool, ToolInstallTool, ToolListTool, ToolRemoveTool,
-    ToolSearchTool, ToolUpgradeTool, WriteFileTool,
+    ToolSearchTool, ToolUpgradeTool, WriteFileTool, ZomatoAuthTool,
 };
 use crate::tools::rate_limiter::RateLimiter;
 use crate::tools::tool::{ApprovalRequirement, Tool, ToolDomain};
@@ -459,6 +459,15 @@ impl ToolRegistry {
     pub fn register_swiggy_auth_tool(&self, secrets: Arc<dyn SecretsStore + Send + Sync>) {
         self.register_sync(Arc::new(SwiggyAuthTool::new(secrets)));
         tracing::debug!("Registered Swiggy auth tool");
+    }
+
+    /// Register Zomato authentication tool.
+    ///
+    /// Enables phone+OTP authentication against Zomato's MCP server without
+    /// a browser. Uses the headless OAuth 2.1 PKCE flow.
+    pub fn register_zomato_auth_tool(&self, secrets: Arc<dyn SecretsStore + Send + Sync>) {
+        self.register_sync(Arc::new(ZomatoAuthTool::new(secrets)));
+        tracing::debug!("Registered Zomato auth tool");
     }
 
     /// Register extension management tools (search, install, auth, activate, list, remove).

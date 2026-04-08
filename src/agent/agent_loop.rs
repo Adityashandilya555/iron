@@ -981,6 +981,43 @@ impl Agent {
         Ok(())
     }
 
+    /// Detect Telegram home-screen button callbacks and store the selected phase
+    /// in session metadata.
+    ///
+    /// Telegram sends a `callback_query` update when the user presses an inline
+    /// keyboard button. The WASM channel converts this to an `IncomingMessage`
+    /// with `metadata.type == "callback_query"` and the button's callback data as
+    /// the message content. This method maps those callback values to Aria phases
+    /// (per the Personifi spec) and persists them in `session.metadata["aria_phase"]`.
+    async fn maybe_track_aria_phase(&self, message: &IncomingMessage) {
+        let is_callback = message
+            .metadata
+            .get("type")
+            .and_then(|v| v.as_str())
+            .is_some_and(|t| t == "callback_query");
+        if !is_callback {
+            return;
+        }
+        let phase: f64 = match message.content.trim() {
+            "order_food" => 4.0,
+            "groceries" => 5.0,
+            "book_table" => 6.0,
+            "chat_mode" => 3.5,
+            _ => return,
+        };
+        let session = self
+            .session_manager
+            .get_or_create_session(&message.user_id)
+            .await;
+        session.lock().await.set_aria_phase(phase);
+        tracing::debug!(
+            user_id = %message.user_id,
+            phase = %phase,
+            callback = %message.content,
+            "Aria phase set from home-screen button press"
+        );
+    }
+
     /// Store extracted document text in workspace memory for future search/recall.
     async fn store_extracted_documents(&self, message: &IncomingMessage) {
         let workspace = match self.workspace() {
@@ -1114,6 +1151,10 @@ impl Agent {
                 _ => {} // Continue, fail-open errors already logged in registry
             }
         }
+
+        // Telegram Phase 3: if this is a home-screen button callback, record the
+        // selected phase in session metadata before entering the agentic loop.
+        self.maybe_track_aria_phase(message).await;
 
         // Hydrate thread from DB if it's a historical thread not in memory
         if let Some(external_thread_id) = message.conversation_scope() {
