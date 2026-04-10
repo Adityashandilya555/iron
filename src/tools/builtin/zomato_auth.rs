@@ -213,6 +213,11 @@ impl Tool for ZomatoAuthTool {
     fn sensitive_params(&self) -> &[&str] {
         &["phone", "otp"]
     }
+
+    fn rate_limit_config(&self) -> Option<crate::tools::tool::ToolRateLimitConfig> {
+        // Max 3 OTP requests per minute, 10 per hour — prevents runaway LLM retry loops
+        Some(crate::tools::tool::ToolRateLimitConfig::new(3, 10))
+    }
 }
 
 // ── Action implementations ─────────────────────────────────────────────────────
@@ -272,7 +277,7 @@ impl ZomatoAuthTool {
             redirect_uri={}&\
             code_challenge={pkce_challenge}&\
             code_challenge_method=S256&\
-            scope=mcp:tools&\
+            scope=offline+openid&\
             state={state}",
             urlencoding::encode(ZOMATO_REDIRECT_URI),
         );
