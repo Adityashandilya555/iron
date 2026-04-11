@@ -270,6 +270,14 @@ impl ZomatoAuthTool {
         let client = http_client()?;
 
         // Step 1: GET /authorize → redirect to /consent with login_challenge + CSRF cookie.
+        //
+        // IMPORTANT: the `/authorize` scope MUST be `mcp:tools` — this is what
+        // Zomato's authorization server expects to bind to the PKCE challenge.
+        // `/verify-otp` below independently sends `scope=offline openid`, which
+        // is the *granted* scope for the resulting token. Using the same
+        // `offline openid` scope here causes `/token` to return HTTP 500
+        // "Failed to exchange token" (see `.claude/skills/food-ordering/
+        // references/zomato-mcp.md` §"Discovered Headless Auth Flow").
         let authorize_url = format!(
             "{ZOMATO_AUTH_BASE}/authorize?\
             response_type=code&\
@@ -277,7 +285,7 @@ impl ZomatoAuthTool {
             redirect_uri={}&\
             code_challenge={pkce_challenge}&\
             code_challenge_method=S256&\
-            scope=offline+openid&\
+            scope=mcp:tools&\
             state={state}",
             urlencoding::encode(ZOMATO_REDIRECT_URI),
         );
