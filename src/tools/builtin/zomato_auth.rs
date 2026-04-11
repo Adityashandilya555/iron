@@ -66,6 +66,7 @@ struct PendingAuth {
     pkce_verifier: String,
     state: String,
     phone_digits: String,
+    client_id: String, // dynamically registered client_id from /register
     created_at_unix: i64,
 }
 
@@ -96,6 +97,11 @@ struct VerifyOtpResponse {
     redirect_uri: Option<String>,
     #[serde(default)]
     error: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct DcrResponse {
+    client_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -269,6 +275,36 @@ impl ZomatoAuthTool {
         let state = generate_state();
         let client = http_client()?;
 
+        // Step 0: POST /register (DCR) to get a real client_id registered with Zomato.
+        // The hardcoded "zomato-mcp-server" is not a registered OAuth client and causes
+        // /token to return HTTP 500 "Failed to exchange token".
+        let dcr_body = serde_json::json!({
+            "client_name": "ironclaw",
+            "redirect_uris": [ZOMATO_REDIRECT_URI],
+            "response_types": ["code"],
+            "grant_types": ["authorization_code"],
+            "token_endpoint_auth_method": "none"
+        });
+        let dcr_resp = client
+            .post(format!("{ZOMATO_AUTH_BASE}/register"))
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .json(&dcr_body)
+            .send()
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("DCR /register failed: {e}")))?;
+
+        let dynamic_client_id = if dcr_resp.status().is_success() {
+            let dcr: DcrResponse = dcr_resp.json().await.map_err(|e| {
+                ToolError::ExecutionFailed(format!("Invalid DCR response: {e}"))
+            })?;
+            tracing::debug!(client_id = %dcr.client_id, "zomato_auth: DCR registered client");
+            dcr.client_id
+        } else {
+            // DCR not supported or failed — fall back to the well-known client_id
+            tracing::debug!("zomato_auth: DCR not available, using fallback client_id");
+            ZOMATO_CLIENT_ID.to_string()
+        };
+
         // Step 1: GET /authorize → redirect to /consent with login_challenge + CSRF cookie.
         //
         // IMPORTANT: the `/authorize` scope MUST be `mcp:tools` — this is what
@@ -281,12 +317,13 @@ impl ZomatoAuthTool {
         let authorize_url = format!(
             "{ZOMATO_AUTH_BASE}/authorize?\
             response_type=code&\
-            client_id={ZOMATO_CLIENT_ID}&\
+            client_id={}&\
             redirect_uri={}&\
             code_challenge={pkce_challenge}&\
             code_challenge_method=S256&\
             scope=mcp:tools&\
             state={state}",
+            urlencoding::encode(&dynamic_client_id),
             urlencoding::encode(ZOMATO_REDIRECT_URI),
         );
 
@@ -394,6 +431,7 @@ impl ZomatoAuthTool {
             pkce_verifier,
             state,
             phone_digits: phone_digits.clone(),
+            client_id: dynamic_client_id,
             created_at_unix: Utc::now().timestamp(),
         };
 
@@ -461,7 +499,7 @@ impl ZomatoAuthTool {
             "id": pending.phone_digits,
             "type": "phone",
             "login_challenge": pending.login_challenge,
-            "client_id": ZOMATO_CLIENT_ID,
+            "client_id": pending.client_id,
             "redirect_uri": ZOMATO_REDIRECT_URI,
             "state": pending.state,
             "scope": "offline openid",
@@ -531,17 +569,15 @@ impl ZomatoAuthTool {
             ("grant_type", "authorization_code"),
             ("code", &auth_code),
             ("code_verifier", &pending.pkce_verifier),
-            ("client_id", ZOMATO_CLIENT_ID),
+            ("client_id", &pending.client_id),
             ("redirect_uri", ZOMATO_REDIRECT_URI),
         ];
 
-        // DEBUG: Log the exact values being sent to /token endpoint to diagnose
-        // HTTP 500 "Failed to exchange token" errors.
         tracing::debug!(
             auth_code_len = auth_code.len(),
             pkce_verifier_len = pending.pkce_verifier.len(),
             redirect_uri = ZOMATO_REDIRECT_URI,
-            client_id = ZOMATO_CLIENT_ID,
+            client_id = %pending.client_id,
             grant_type = "authorization_code",
             "zomato_auth: /token request values"
         );
