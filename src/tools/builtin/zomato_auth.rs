@@ -420,14 +420,25 @@ impl ZomatoAuthTool {
             ));
         }
 
-        let pending = self.pending.lock().await.remove(user_id).ok_or_else(|| {
-            ToolError::ExecutionFailed(
-                "No pending Zomato auth found. Please call start_auth first.".to_string(),
-            )
-        })?;
+        // Peek (clone) the pending auth — do NOT remove it yet. If the
+        // subsequent /verify-otp or /token calls fail, we need to keep the
+        // login_challenge / csrf_cookie / pkce_verifier intact so the user
+        // can retry with a fresh OTP without restarting the whole flow.
+        // Only the expiry-cleanup path and the final success path remove it.
+        let pending = {
+            let guard = self.pending.lock().await;
+            guard.get(user_id).cloned().ok_or_else(|| {
+                ToolError::ExecutionFailed(
+                    "No pending Zomato auth found. Please call start_auth first.".to_string(),
+                )
+            })?
+        };
 
         let age = Utc::now().timestamp() - pending.created_at_unix;
         if age > OTP_SESSION_TIMEOUT_SECS {
+            // Expired state is no longer useful — drop it so the next
+            // start_auth call begins a clean session.
+            self.pending.lock().await.remove(user_id);
             return Err(ToolError::ExecutionFailed(
                 "OTP session expired (10-minute limit). Please start over.".to_string(),
             ));
@@ -575,6 +586,9 @@ impl ZomatoAuthTool {
                 })?;
         }
 
+        // Auth succeeded end-to-end — now it's safe to drop the pending state.
+        self.pending.lock().await.remove(user_id);
+
         Ok(ToolOutput::text(
             "Zomato connected! You can now order food from Zomato.",
             start.elapsed(),
@@ -664,6 +678,90 @@ mod tests {
             text.contains("not connected"),
             "expected 'not connected' message, got: {}",
             text
+        );
+    }
+
+    /// Regression: if /verify-otp or /token fails, the PendingAuth state
+    /// must remain so the user can retry with a fresh OTP without restarting
+    /// the whole /authorize → /login flow. Previously `complete_auth`
+    /// called `.remove(user_id)` at the top, destroying the state on any
+    /// downstream HTTP failure.
+    #[tokio::test]
+    async fn complete_auth_preserves_pending_on_failure() {
+        let tool = ZomatoAuthTool::new(test_secrets());
+        let ctx = JobContext::with_user("test-user", "test", "test");
+
+        // Seed a fake pending auth — the login_challenge / csrf_cookie are
+        // bogus so /verify-otp will definitely fail (either network error
+        // or upstream rejection).
+        {
+            let mut guard = tool.pending.lock().await;
+            guard.insert(
+                "test-user".to_string(),
+                PendingAuth {
+                    login_challenge: "fake-challenge".to_string(),
+                    csrf_cookie: "fake-cookie".to_string(),
+                    pkce_verifier: "fake-verifier".to_string(),
+                    state: "fake-state".to_string(),
+                    phone_digits: "9289289123".to_string(),
+                    created_at_unix: Utc::now().timestamp(),
+                },
+            );
+        }
+
+        let params = serde_json::json!({
+            "action": "complete_auth",
+            "otp": "123456",
+        });
+        let result = tool.execute(params, &ctx).await;
+        assert!(
+            result.is_err(),
+            "complete_auth with fake state must fail, got: {:?}",
+            result
+        );
+
+        // The critical assertion: pending state must still be present after
+        // the failure, so the user can share a new OTP and retry.
+        let guard = tool.pending.lock().await;
+        assert!(
+            guard.contains_key("test-user"),
+            "PendingAuth must be retained after /verify-otp or /token failure"
+        );
+    }
+
+    /// Regression: expired PendingAuth entries should be evicted so the
+    /// next start_auth begins cleanly.
+    #[tokio::test]
+    async fn complete_auth_clears_expired_pending() {
+        let tool = ZomatoAuthTool::new(test_secrets());
+        let ctx = JobContext::with_user("test-user", "test", "test");
+
+        {
+            let mut guard = tool.pending.lock().await;
+            guard.insert(
+                "test-user".to_string(),
+                PendingAuth {
+                    login_challenge: "fake".to_string(),
+                    csrf_cookie: "fake".to_string(),
+                    pkce_verifier: "fake".to_string(),
+                    state: "fake".to_string(),
+                    phone_digits: "9289289123".to_string(),
+                    // More than OTP_SESSION_TIMEOUT_SECS in the past.
+                    created_at_unix: Utc::now().timestamp() - (OTP_SESSION_TIMEOUT_SECS + 60),
+                },
+            );
+        }
+
+        let params = serde_json::json!({
+            "action": "complete_auth",
+            "otp": "123456",
+        });
+        let _ = tool.execute(params, &ctx).await;
+
+        let guard = tool.pending.lock().await;
+        assert!(
+            !guard.contains_key("test-user"),
+            "expired PendingAuth should be evicted on complete_auth"
         );
     }
 
