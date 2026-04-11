@@ -503,6 +503,11 @@ impl ZomatoAuthTool {
             ToolError::ExecutionFailed("No redirect_uri in Zomato verify-OTP response.".to_string())
         })?;
 
+        tracing::debug!(
+            redirect_uri = %redirect_uri,
+            "zomato_auth: received redirect_uri from /verify-otp"
+        );
+
         let auth_code = url::Url::parse(&redirect_uri)
             .ok()
             .and_then(|u| {
@@ -516,6 +521,11 @@ impl ZomatoAuthTool {
                 )
             })?;
 
+        tracing::debug!(
+            auth_code_len = auth_code.len(),
+            "zomato_auth: extracted auth code from redirect_uri"
+        );
+
         // Step 4: POST /token with form-encoded body (NOT JSON).
         let token_form = [
             ("grant_type", "authorization_code"),
@@ -524,6 +534,17 @@ impl ZomatoAuthTool {
             ("client_id", ZOMATO_CLIENT_ID),
             ("redirect_uri", ZOMATO_REDIRECT_URI),
         ];
+
+        // DEBUG: Log the exact values being sent to /token endpoint to diagnose
+        // HTTP 500 "Failed to exchange token" errors.
+        tracing::debug!(
+            auth_code_len = auth_code.len(),
+            pkce_verifier_len = pending.pkce_verifier.len(),
+            redirect_uri = ZOMATO_REDIRECT_URI,
+            client_id = ZOMATO_CLIENT_ID,
+            grant_type = "authorization_code",
+            "zomato_auth: /token request values"
+        );
 
         let token_resp = client
             .post(format!("{ZOMATO_AUTH_BASE}/token"))
