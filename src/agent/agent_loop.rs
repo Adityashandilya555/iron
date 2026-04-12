@@ -856,8 +856,19 @@ impl Agent {
             let _ = self.channels.broadcast("gateway", "default", out).await;
         }
 
-        // Main message loop
+        // Main message loop — concurrent per-message dispatch.
+        //
+        // Each incoming message is handled in its own tokio::spawn task so
+        // different users run concurrently. Same-user serialization is
+        // guaranteed by the per-user Arc<Mutex<Session>> in SessionManager.
+        //
+        // Shutdown is coordinated via a watch channel: spawned tasks that
+        // receive a /quit command send `true`, which wakes the main select
+        // and breaks the loop.
         tracing::debug!("Agent {} ready and listening", self.config.name);
+
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+        let agent = Arc::new(self);
 
         loop {
             let message = tokio::select! {
@@ -865,6 +876,13 @@ impl Agent {
                 _ = tokio::signal::ctrl_c() => {
                     tracing::debug!("Ctrl+C received, shutting down...");
                     break;
+                }
+                result = shutdown_rx.changed() => {
+                    if result.is_ok() && *shutdown_rx.borrow() {
+                        tracing::debug!("Shutdown command received, exiting...");
+                        break;
+                    }
+                    continue;
                 }
                 msg = message_stream.next() => {
                     match msg {
@@ -877,92 +895,97 @@ impl Agent {
                 }
             };
 
-            // Apply transcription middleware to audio attachments
-            let mut message = message;
-            if let Some(ref transcription) = self.deps.transcription {
-                transcription.process(&mut message).await;
-            }
+            let agent = Arc::clone(&agent);
+            let shutdown_tx = shutdown_tx.clone();
 
-            // Apply document extraction middleware to document attachments
-            if let Some(ref doc_extraction) = self.deps.document_extraction {
-                doc_extraction.process(&mut message).await;
-            }
+            tokio::spawn(async move {
+                // Apply transcription middleware to audio attachments
+                let mut message = message;
+                if let Some(ref transcription) = agent.deps.transcription {
+                    transcription.process(&mut message).await;
+                }
 
-            // Store successfully extracted document text in workspace for indexing
-            self.store_extracted_documents(&message).await;
+                // Apply document extraction middleware to document attachments
+                if let Some(ref doc_extraction) = agent.deps.document_extraction {
+                    doc_extraction.process(&mut message).await;
+                }
 
-            match self.handle_message(&message).await {
-                Ok(Some(response)) if !response.is_empty() => {
-                    // Hook: BeforeOutbound — allow hooks to modify or suppress outbound
-                    let event = crate::hooks::HookEvent::Outbound {
-                        user_id: message.user_id.clone(),
-                        channel: message.channel.clone(),
-                        content: response.clone(),
-                        thread_id: message.thread_id.clone(),
-                    };
-                    match self.hooks().run(&event).await {
-                        Err(err) => {
-                            tracing::warn!("BeforeOutbound hook blocked response: {}", err);
-                        }
-                        Ok(crate::hooks::HookOutcome::Continue {
-                            modified: Some(new_content),
-                        }) => {
-                            if let Err(e) = self
-                                .channels
-                                .respond(&message, OutgoingResponse::text(new_content))
-                                .await
-                            {
-                                tracing::error!(
-                                    channel = %message.channel,
-                                    error = %e,
-                                    "Failed to send response to channel"
-                                );
+                // Store successfully extracted document text in workspace for indexing
+                agent.store_extracted_documents(&message).await;
+
+                match agent.handle_message(&message).await {
+                    Ok(Some(response)) if !response.is_empty() => {
+                        // Hook: BeforeOutbound — allow hooks to modify or suppress outbound
+                        let event = crate::hooks::HookEvent::Outbound {
+                            user_id: message.user_id.clone(),
+                            channel: message.channel.clone(),
+                            content: response.clone(),
+                            thread_id: message.thread_id.clone(),
+                        };
+                        match agent.hooks().run(&event).await {
+                            Err(err) => {
+                                tracing::warn!("BeforeOutbound hook blocked response: {}", err);
                             }
-                        }
-                        _ => {
-                            if let Err(e) = self
-                                .channels
-                                .respond(&message, OutgoingResponse::text(response))
-                                .await
-                            {
-                                tracing::error!(
-                                    channel = %message.channel,
-                                    error = %e,
-                                    "Failed to send response to channel"
-                                );
+                            Ok(crate::hooks::HookOutcome::Continue {
+                                modified: Some(new_content),
+                            }) => {
+                                if let Err(e) = agent
+                                    .channels
+                                    .respond(&message, OutgoingResponse::text(new_content))
+                                    .await
+                                {
+                                    tracing::error!(
+                                        channel = %message.channel,
+                                        error = %e,
+                                        "Failed to send response to channel"
+                                    );
+                                }
+                            }
+                            _ => {
+                                if let Err(e) = agent
+                                    .channels
+                                    .respond(&message, OutgoingResponse::text(response))
+                                    .await
+                                {
+                                    tracing::error!(
+                                        channel = %message.channel,
+                                        error = %e,
+                                        "Failed to send response to channel"
+                                    );
+                                }
                             }
                         }
                     }
-                }
-                Ok(Some(empty)) => {
-                    // Empty response, nothing to send (e.g. approval handled via send_status)
-                    tracing::debug!(
-                        channel = %message.channel,
-                        user = %message.user_id,
-                        empty_len = empty.len(),
-                        "Suppressed empty response (not sent to channel)"
-                    );
-                }
-                Ok(None) => {
-                    // Shutdown signal received (/quit, /exit, /shutdown)
-                    tracing::debug!("Shutdown command received, exiting...");
-                    break;
-                }
-                Err(e) => {
-                    tracing::error!("Error handling message: {}", e);
-                    if let Err(send_err) = self
-                        .channels
-                        .respond(&message, OutgoingResponse::text(format!("Error: {}", e)))
-                        .await
-                    {
-                        tracing::error!(
+                    Ok(Some(empty)) => {
+                        // Empty response, nothing to send (e.g. approval handled via send_status)
+                        tracing::debug!(
                             channel = %message.channel,
-                            error = %send_err,
-                            "Failed to send error response to channel"
+                            user = %message.user_id,
+                            empty_len = empty.len(),
+                            "Suppressed empty response (not sent to channel)"
                         );
                     }
+                    Ok(None) => {
+                        // Shutdown signal received (/quit, /exit, /shutdown)
+                        tracing::debug!("Shutdown command received, signaling main loop...");
+                        let _ = shutdown_tx.send(true);
+                    }
+                    Err(e) => {
+                        tracing::error!("Error handling message: {}", e);
+                        if let Err(send_err) = agent
+                            .channels
+                            .respond(&message, OutgoingResponse::text(format!("Error: {}", e)))
+                            .await
+                        {
+                            tracing::error!(
+                                channel = %message.channel,
+                                error = %send_err,
+                                "Failed to send error response to channel"
+                            );
+                        }
+                    }
                 }
-            }
+            });
         }
 
         // Cleanup
@@ -975,10 +998,47 @@ impl Agent {
         if let Some((cron_handle, _)) = routine_handle {
             cron_handle.abort();
         }
-        self.scheduler.stop_all().await;
-        self.channels.shutdown_all().await?;
+        agent.scheduler.stop_all().await;
+        agent.channels.shutdown_all().await?;
 
         Ok(())
+    }
+
+    /// Detect Telegram home-screen button callbacks and store the selected phase
+    /// in session metadata.
+    ///
+    /// Telegram sends a `callback_query` update when the user presses an inline
+    /// keyboard button. The WASM channel converts this to an `IncomingMessage`
+    /// with `metadata.type == "callback_query"` and the button's callback data as
+    /// the message content. This method maps those callback values to Aria phases
+    /// (per the Personifi spec) and persists them in `session.metadata["aria_phase"]`.
+    async fn maybe_track_aria_phase(&self, message: &IncomingMessage) {
+        let is_callback = message
+            .metadata
+            .get("type")
+            .and_then(|v| v.as_str())
+            .is_some_and(|t| t == "callback_query");
+        if !is_callback {
+            return;
+        }
+        let phase: f64 = match message.content.trim() {
+            "order_food" => 4.0,
+            "groceries" => 5.0,
+            "book_table" => 6.0,
+            "chat_mode" => 3.5,
+            _ => return,
+        };
+        let session = self
+            .session_manager
+            .get_or_create_session(&message.user_id)
+            .await;
+        session.lock().await.set_aria_phase(phase);
+        tracing::debug!(
+            user_id = %message.user_id,
+            phase = %phase,
+            callback = %message.content,
+            "Aria phase set from home-screen button press"
+        );
     }
 
     /// Store extracted document text in workspace memory for future search/recall.
@@ -1114,6 +1174,10 @@ impl Agent {
                 _ => {} // Continue, fail-open errors already logged in registry
             }
         }
+
+        // Telegram Phase 3: if this is a home-screen button callback, record the
+        // selected phase in session metadata before entering the agentic loop.
+        self.maybe_track_aria_phase(message).await;
 
         // Hydrate thread from DB if it's a historical thread not in memory
         if let Some(external_thread_id) = message.conversation_scope() {

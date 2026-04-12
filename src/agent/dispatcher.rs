@@ -551,26 +551,26 @@ impl<'a> LoopDelegate for ChatDelegate<'a> {
                 .await;
         }
 
-        // Record tool calls in the thread with sensitive params redacted.
+        // Record tool calls in the thread with the original arguments intact.
+        //
+        // Redaction must NOT happen here: `turn.tool_calls[].parameters` is
+        // replayed verbatim to the LLM on the next iteration via
+        // `Thread::messages()`. If we stored `"[REDACTED]"` in place of a
+        // sensitive value (phone, OTP), the model would read its own prior
+        // tool call back as `phone:"[REDACTED]"` and copy the literal on
+        // retry, blowing up validation. Redaction for logs/SSE/hooks and the
+        // approval UI happens at those call sites with the tool's
+        // `sensitive_params()` — see `redact_params(...)` usage below and in
+        // `thread_ops.rs`.
         {
-            let mut redacted_args: Vec<serde_json::Value> = Vec::with_capacity(tool_calls.len());
-            for tc in &tool_calls {
-                let safe = if let Some(tool) = self.agent.tools().get(&tc.name).await {
-                    redact_params(&tc.arguments, tool.sensitive_params())
-                } else {
-                    tc.arguments.clone()
-                };
-                redacted_args.push(safe);
-            }
             let mut sess = self.session.lock().await;
             if let Some(thread) = sess.threads.get_mut(&self.thread_id)
                 && let Some(turn) = thread.last_turn_mut()
             {
-                // Set turn-level narrative.
                 if turn.narrative.is_none() {
                     turn.narrative = narrative;
                 }
-                for (tc, safe_args) in tool_calls.iter().zip(redacted_args) {
+                for tc in &tool_calls {
                     let sanitized_rationale = tc.reasoning.as_ref().map(|r| {
                         self.agent
                             .safety()
@@ -579,7 +579,7 @@ impl<'a> LoopDelegate for ChatDelegate<'a> {
                     });
                     turn.record_tool_call_with_reasoning(
                         &tc.name,
-                        safe_args,
+                        tc.arguments.clone(),
                         sanitized_rationale,
                         Some(tc.id.clone()),
                     );

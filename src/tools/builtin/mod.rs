@@ -14,8 +14,10 @@ pub mod routine;
 pub mod secrets_tools;
 pub(crate) mod shell;
 pub mod skill_tools;
+pub mod swiggy_auth;
 mod time;
 mod tool_info;
+pub mod zomato_auth;
 
 pub use echo::EchoTool;
 pub use extension_tools::{
@@ -39,8 +41,10 @@ pub use routine::{
 pub use secrets_tools::{SecretDeleteTool, SecretListTool};
 pub use shell::ShellTool;
 pub use skill_tools::{SkillInstallTool, SkillListTool, SkillRemoveTool, SkillSearchTool};
+pub use swiggy_auth::SwiggyAuthTool;
 pub use time::TimeTool;
 pub use tool_info::ToolInfoTool;
+pub use zomato_auth::ZomatoAuthTool;
 mod html_converter;
 pub mod image_analyze;
 pub mod image_edit;

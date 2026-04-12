@@ -1,8 +1,27 @@
-# User Context
+# User Profile
 
-- **Name:**
-- **Timezone:**
-- **Preferences:**
+## Identity
+- name:
+- telegram_id:
+- phone:
 
-The agent will fill this in as it learns about you.
-You can also edit this directly to provide context upfront.
+## Location
+- city: Bangalore
+- residence:
+- residence_type:
+
+## Preferences
+- diet:
+- cuisines: []
+- budget_min:
+- budget_max:
+
+## Social
+- friends: []
+- squads: []
+
+## History
+- onboarding_completed:
+- last_order_platform:
+- last_order_restaurant:
+- order_count: 0

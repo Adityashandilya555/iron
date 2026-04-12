@@ -1,0 +1,9 @@
+{
+  "name": "swiggy-dineout",
+  "display_name": "Swiggy Dineout",
+  "kind": "mcp_server",
+  "description": "Discover restaurants and reserve tables via Swiggy Dineout — find dining options, check slot availability, and book tables",
+  "keywords": ["dineout", "restaurant", "table", "booking", "reservation", "swiggy", "dinner", "date", "dine"],
+  "url": "https://mcp.swiggy.com/dineout",
+  "auth": "none"
+}

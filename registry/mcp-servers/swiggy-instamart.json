@@ -1,0 +1,9 @@
+{
+  "name": "swiggy-instamart",
+  "display_name": "Swiggy Instamart",
+  "kind": "mcp_server",
+  "description": "Order groceries and daily essentials via Swiggy Instamart — search products, manage cart, and place orders",
+  "keywords": ["groceries", "instamart", "swiggy", "vegetables", "milk", "essentials", "shopping", "supermarket"],
+  "url": "https://mcp.swiggy.com/im",
+  "auth": "none"
+}

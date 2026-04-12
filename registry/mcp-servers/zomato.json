@@ -1,0 +1,9 @@
+{
+  "name": "zomato-mcp-server",
+  "display_name": "Zomato",
+  "kind": "mcp_server",
+  "description": "Order food from restaurants via Zomato — discover nearby restaurants, browse menus, manage cart, and place orders",
+  "keywords": ["food", "order", "restaurant", "zomato", "delivery", "menu", "biryani", "pizza", "lunch", "dinner", "hungry", "eat"],
+  "url": "https://mcp-server.zomato.com/mcp",
+  "auth": "none"
+}

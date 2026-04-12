@@ -61,7 +61,7 @@ impl AgentConfig {
             max_cost_per_day_cents: None,
             max_actions_per_hour: None,
             max_cost_per_user_per_day_cents: None,
-            max_tool_iterations: 10,
+            max_tool_iterations: 20,
             auto_approve_tools: true,
             default_timezone: "UTC".to_string(),
             max_jobs_per_user: None,
