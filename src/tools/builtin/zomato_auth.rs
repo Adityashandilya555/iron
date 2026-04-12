@@ -294,9 +294,10 @@ impl ZomatoAuthTool {
             .map_err(|e| ToolError::ExecutionFailed(format!("DCR /register failed: {e}")))?;
 
         let dynamic_client_id = if dcr_resp.status().is_success() {
-            let dcr: DcrResponse = dcr_resp.json().await.map_err(|e| {
-                ToolError::ExecutionFailed(format!("Invalid DCR response: {e}"))
-            })?;
+            let dcr: DcrResponse = dcr_resp
+                .json()
+                .await
+                .map_err(|e| ToolError::ExecutionFailed(format!("Invalid DCR response: {e}")))?;
             tracing::debug!(client_id = %dcr.client_id, "zomato_auth: DCR registered client");
             dcr.client_id
         } else {
@@ -368,7 +369,10 @@ impl ZomatoAuthTool {
         let login_challenge = url::Url::parse(&if location.starts_with('/') {
             format!("{ZOMATO_AUTH_BASE}{location}")
         } else if location.starts_with("./") {
-            format!("{ZOMATO_AUTH_BASE}/{}", location.strip_prefix("./").unwrap_or(location))
+            format!(
+                "{ZOMATO_AUTH_BASE}/{}",
+                location.strip_prefix("./").unwrap_or(location)
+            )
         } else {
             location.to_string()
         })
@@ -769,6 +773,7 @@ mod tests {
                     pkce_verifier: "fake-verifier".to_string(),
                     state: "fake-state".to_string(),
                     phone_digits: "9289289123".to_string(),
+                    client_id: "fake-client-id".to_string(),
                     created_at_unix: Utc::now().timestamp(),
                 },
             );
@@ -811,6 +816,7 @@ mod tests {
                     pkce_verifier: "fake".to_string(),
                     state: "fake".to_string(),
                     phone_digits: "9289289123".to_string(),
+                    client_id: "fake-client-id".to_string(),
                     // More than OTP_SESSION_TIMEOUT_SECS in the past.
                     created_at_unix: Utc::now().timestamp() - (OTP_SESSION_TIMEOUT_SECS + 60),
                 },
